@@ -1,6 +1,7 @@
 package com.fourth.ykd.ai.infrastructure.memory;
 
 import com.fourth.ykd.ai.dto.PersistedChatMessage;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -10,7 +11,8 @@ import java.util.List;
 @Repository
 public class SqliteChatMessageRepository {
     private JdbcTemplate jdbcTemplate;
-    public SqliteChatMessageRepository(JdbcTemplate jdbcTemplate) {
+    public SqliteChatMessageRepository(@Qualifier("sqliteJdbcTemplate")
+                                       JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
     //Create

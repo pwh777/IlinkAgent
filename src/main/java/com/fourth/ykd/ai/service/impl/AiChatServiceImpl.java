@@ -4,19 +4,17 @@ import com.fourth.ykd.ai.dto.AiChatResponse;
 import com.fourth.ykd.ai.dto.PersistedChatMessage;
 import com.fourth.ykd.ai.infrastructure.memory.SqliteChatMessageRepository;
 import com.fourth.ykd.ai.service.AiChatService;
-
-
+import com.fourth.ykd.ai.service.rag.QueryRewriter;
+import com.fourth.ykd.ai.service.rag.RetrievalService;
 import com.fourth.ykd.ai.utils.*;
 import com.fourth.ykd.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 /* 普通文本聊天：DeepSeek 仍然是文本对话模型，只是通过 Spring AI ChatClient 调用。 */
 @Slf4j
@@ -58,6 +56,10 @@ public class AiChatServiceImpl implements AiChatService {
 
     private final SqliteChatMessageRepository repository;
 
+    private final RetrievalService retrievalService;
+
+    private final QueryRewriter queryRewriter;
+
     @Override
     public AiChatResponse chat(String message) {
         return chat(DEFAULT_CONVERSATION_ID, message);
@@ -73,26 +75,44 @@ public class AiChatServiceImpl implements AiChatService {
                 ? conversationId.trim()
                 : DEFAULT_CONVERSATION_ID;
         List<PersistedChatMessage> history = repository.findByConversationId(normalizedConversationId);
-        StringBuilder context = new StringBuilder();
-        for(PersistedChatMessage msg:history){
-            context.append(msg.role())
+        StringBuilder question = new StringBuilder();
+        for (PersistedChatMessage msg : history) {
+            question.append(msg.role())
                     .append(":")
                     .append(msg.content())
                     .append("\n");
         }
-        context.append("\nUSER:")
+        question.append("\nUSER:")
                 .append(normalizedMessage);
 
         log.info("[AI][MEMORY_CHAT] conversationId={}", normalizedConversationId);
-        String answer = springAiChatClient.prompt()
-                .system(TOOL_USAGE_INSTRUCTIONS + """
 
+        // 1. Rewrite user message into a standalone retrieval query
+        String standaloneQuery = queryRewriter.rewrite(history, normalizedMessage);
+
+        // 2. Always attempt retrieval; getKnowledge() returns "" if nothing passes threshold
+        String knowledge = retrievalService.getKnowledge(standaloneQuery);
+
+        // 3. Debug log: knowledge length and retrieved document count
+        int docCount = retrievalService.search(standaloneQuery).size();
+        log.debug("[AI][RAG] 最终注入的 knowledge 长度={}, 召回文档数={}", knowledge.length(), docCount);
+        String answer = springAiChatClient.prompt()
+                .system( """
+                        你是微信机器人智能助手，所有回答使用中文。
+                        
+                                【知识库参考】
+                                %s
+                        
+                                【工具使用规则】
+                                %s
+                        
+                                【能力说明】
                         系统已支持 PDF、DOCX、XLSX 文件生成，以及文生图、参考图编辑、图片识别和语音合成。
                         不得声称这些能力不存在或无法使用；用户追问先前生成结果时，应基于聊天记忆如实说明。
                         当用户明确要求语音回复时，外层系统会把回答正文合成为语音；你只需正常回答用户的问题，
                         输出适合朗读的正文，不得声称自己只能文本交互、不能语音回复，也不要解释语音合成过程。
-                        """)
-                .user(String.valueOf(context))
+                        """.formatted(knowledge,TOOL_USAGE_INSTRUCTIONS ))
+                .user(String.valueOf(question))
                 .tools(mathCalculatorTools,timeTool,baiduSearchTool,weatherTool,translationTool)
                 .call()
                 .content();

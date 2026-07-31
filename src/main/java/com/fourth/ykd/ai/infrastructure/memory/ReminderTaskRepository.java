@@ -2,6 +2,7 @@ package com.fourth.ykd.ai.infrastructure.memory;
 
 import com.fourth.ykd.ai.dto.ReminderTask;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -12,7 +13,7 @@ public class ReminderTaskRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public ReminderTaskRepository(JdbcTemplate jdbcTemplate) {
+    public ReminderTaskRepository(@Qualifier("sqliteJdbcTemplate") JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

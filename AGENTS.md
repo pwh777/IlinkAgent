@@ -128,3 +128,145 @@ CREATE_TASK 或 DELETE_TASK，交由模型路由走 TEXT 对话回复。
    b. matchExplicitIntent()：CREATE_TASK/DELETE_TASK 检查前先判定 TASK_NEGATIVE_PATTERN，命中则返回 Optional.empty()
 未改动文件：ReminderTask.java、ReminderTaskRepository.java、ReminderService.java、DynamicSchedulerTool.java 等均保留原样；
 验证：mvn -q -DskipTests compile 通过。
+
+RAG 检索层重构：拆分职责、配置外置、QueryRewriter 多轮改写
+改动清单：
+1. RagService 拆分为两个独立接口，放在 com.fourth.ykd.ai.service.rag 包下：
+   - RetrievalService：search() + getKnowledge()
+   - IngestionService：addKnowledge()
+   各自有独立实现类 RetrievalServiceImpl / IngestionServiceImpl
+2. RagRetrievalProperties.java（新建）：
+   - @ConfigurationProperties(prefix = "rag.retrieval")
+   - topK=3 / similarityThreshold=0.7 从配置读取，不再 hard-code
+   - RagConfig 增加 @EnableConfigurationProperties(RagRetrievalProperties.class)
+3. RetrievalServiceImpl 改进：
+   - search() 按相似度降序排序（Document.getScore() 倒序）
+   - getKnowledge() 过滤低于阈值的文档，全部低于阈值返回空字符串
+   - 组装 prompt 片段时提取 metadata 中的 source 和 title
+4. QueryRewriter.java（新建）：
+   - 输入 List<PersistedChatMessage> history + String currentQuery
+   - history 为空时直接返回 currentQuery
+   - 非空时用 ChatClient 调用小模型（模型名通过 rag.rewrite.model 配置），压缩多轮对话为独立检索问题
+   - 模型调用失败时 fallback 返回原始 query
+5. AiChatServiceImpl 调用链路变更：
+   - 旧：ragService.needSearch(question) → ragService.getKnowledge(question)
+   - 新：queryRewriter.rewrite(history, msg) → retrievalService.getKnowledge(standaloneQuery)
+   - 新增 DEBUG 日志打印 knowledge 长度和召回文档数
+   - 不再依赖 RagService
+6. RagController（test）更新为注入 RetrievalService + IngestionService
+7. application.properties 新增：
+   - rag.retrieval.top-k=3
+   - rag.retrieval.similarity-threshold=0.7
+   - rag.rewrite.model=${RAG_REWRITE_MODEL:deepseek-chat}
+设计决策：
+- needSearch() 废弃（移除关键词匹配），改为默认始终检索；getKnowledge() 内部根据相似度阈值决定返回空字符串或知识片段
+- QueryRewriter 作为独立 @Component，便于后续升级为 Embedding-based/LLM-based 改写策略
+- 旧 RagService/RagServiceImpl 保留不变（其他模块可能引用），新调用链路不再依赖它们
+未改动文件：RagService.java、RagServiceImpl.java、ReminderTask.java、ReminderTaskRepository.java 等均保留原样；
+验证：mvn -q -DskipTests compile 通过。
+
+文档接入（Ingestion）管线实现：切分配置化、幂等去重、事务保障
+改动清单：
+1. RagIngestionProperties.java（新建）：
+   - @ConfigurationProperties(prefix = "rag.ingestion")
+   - chunkSize=800 / chunkOverlap=100 外部可配
+2. RagConfig.java：
+   - 新增 TokenTextSplitter Bean，注入 RagIngestionProperties，代替 new TokenTextSplitter()
+   - @EnableConfigurationProperties 扩展为 {RagRetrievalProperties.class, RagIngestionProperties.class}
+3. RagDataSourceConfig.java：
+   - 新增 ragTransactionManager() Bean（PlatformTransactionManager），绑定 ragDataSource
+   - 用于 @Transactional 保障向量存储写入和去重表操作的原子性
+4. IngestionService.java 接口扩展：
+   - ingestDocument(sourceId, title, content, metadata)
+   - deleteBySourceId(sourceId)
+   - updateDocument(sourceId, title, content, metadata) → deleteBySourceId + ingestDocument
+   - addKnowledge(text) 保留兼容，内部委托 ingestDocument
+5. IngestionServiceImpl.java 全量重写：
+   a. 分块策略：注入 TokenTextSplitter Bean，chunkSize 从配置读取
+   b. 元数据注入：每个 chunk 的 metadata 包含 sourceId / title / chunkIndex / totalChunks / ingestedAt
+   c. 幂等去重：
+      - @PostConstruct 自动建表 rag_ingestion_dedup(source_id, content_hash, ingested_at)
+      - ingestDocument 计算 SHA-256(content)，查询 (sourceId, contentHash) 是否已存在
+      - 存在则跳过写入；不存在则分块存储 + 插入去重记录
+   d. 事务保障：所有写方法标注 @Transactional(transactionManager = "ragTransactionManager")
+   e. deleteBySourceId：JDBC 查询 vector_store 表中 metadata->>'sourceId' 匹配的 id，调用 store.delete(ids) 后清理去重表
+   f. updateDocument：同一事务内先 deleteBySourceId 再 ingestDocument
+6. application.properties 新增：
+   - rag.ingestion.chunk-size=800
+   - rag.ingestion.chunk-overlap=100
+
+新增 SQL（@PostConstruct 自动执行）：
+   CREATE TABLE IF NOT EXISTS rag_ingestion_dedup (
+       source_id    VARCHAR(512) NOT NULL,
+       content_hash VARCHAR(64)  NOT NULL,
+       ingested_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (source_id, content_hash)
+   );
+
+调用链示例：
+  ingestionService.ingestDocument("doc-001", "项目文档", fullText, Map.of("source", "doc"))
+    → sha256(fullText)
+    → SELECT COUNT(*) FROM rag_ingestion_dedup WHERE source_id='doc-001' AND content_hash='abc...'
+    → 已存在? skip
+    → 不存在: TokenTextSplitter.split() → 逐 chunk 注入 metadata → store.add(chunks) → INSERT dedup
+
+设计决策：
+- 去重粒度为 sourceId + 全文档内容 hash（非逐 chunk），保证同一文档内容不重复分块写入
+- deleteBySourceId 通过 JDBC 查询 pgvector 的 metadata JSON 字段（metadata ->> 'sourceId'），不依赖 VectorStore 的 filter API
+- TokenTextSplitter 不支持传统 overlap，chunkOverlap 配置预留给未来切换 splitter 实现
+未改动文件：RagService.java、RagServiceImpl.java、AiChatServiceImpl.java、RetrievalService.java、RetrievalServiceImpl.java、QueryRewriter.java 等均保留原样；
+验证：mvn -q -DskipTests compile 通过。
+
+RAG 工程化横切能力：可观测性、容错降级、配置收口、单元测试
+改动清单：
+1. pom.xml：
+   - 新增 spring-boot-starter-aop（@Aspect 支持）
+   - 新增 spring-retry（@Retryable / @Recover）
+2. RagProperties.java（新建，替代旧 RagRetrievalProperties + RagIngestionProperties）：
+   - @ConfigurationProperties(prefix = "rag") 统一收拢所有 rag.* 配置
+   - 内嵌检索配置组：retrieval.topK=3, retrieval.similarityThreshold=0.7
+   - 内嵌接入配置组：ingestion.chunkSize=800, ingestion.chunkOverlap=100
+   - 内嵌嵌入模型配置组：embedding.modelName=text-embedding-v4
+   - 内嵌改写配置组：rewrite.model=deepseek-chat
+   - 替代 @Value 注入，消除分散配置
+3. 删除 RagRetrievalProperties.java 和 RagIngestionProperties.java
+4. RagAopConfig.java（新建）：
+   - @EnableAspectJAutoProxy(exposeProxy = true) 允许 self-proxy 内部调用
+   - @EnableRetry(order = 2) 控制 @Retryable 在 AOP 链中的位置
+5. RagMetricsAspect.java（新建）：
+   - @Aspect @Order(3)，拦截 RetrievalService.search 和 IngestionService.ingestDocument
+   - 记录方法名、耗时(ms)、query/sourceId、返回文档数、异常类型
+   - 使用 Slf4j 输出结构化 JSON 日志行（event: "rag.metrics"）
+6. CircuitBreaker.java（新建）：
+   - 自定义 @CircuitBreaker 注解：name / failureThreshold=5 / openTimeoutMs=30000
+7. CircuitBreakerAspect.java（新建）：
+   - @Aspect @Order(1) 最外层切面
+   - 维护 ConcurrentHashMap<name, CircuitState> 状态机（CLOSED / OPEN / HALF_OPEN）
+   - 开放后返回 List=emptyList / String="" / void=null 兜底值
+8. RetrievalServiceImpl.java 增强：
+   - search() 标注 @CircuitBreaker(name="rag-search") + @Retryable(maxAttempts=3, backoff=1000ms)
+   - 新增 @Recover recoverSearch() 方法：重试耗尽返回空 List，不抛异常导致聊天 500
+   - getKnowledge() 内部通过 self-proxy 调用 search()，使容错机制生效
+   - 注入 RagProperties 替代原 RagRetrievalProperties
+9. QueryRewriter.java 重构：
+   - 移除 @Value 字段，改为构造注入 RagProperties.rewrite.model
+10. RagConfig.java 更新：
+    - @EnableConfigurationProperties(RagProperties.class) 替代旧双属性类
+    - TokenTextSplitter Bean 参数从 ragProperties.getIngestion() 获取
+11. 单元测试：
+    - RetrievalServiceImplTest：mock VectorStore，验证 search 按 score 降序、getKnowledge 包含 metadata source/title、阈值过滤、空结果
+    - QueryRewriterTest：mock ChatClient，验证无 history 直传原文、有 history 调用模型改写
+12. application.properties 新增 rag.embedding.model-name
+13. application-test.properties（新建）：测试用 RAG 配置
+AOP 执行链路：
+  CircuitBreakerAspect(@Order(1))
+   → @Retryable(order=2, 3 次重试)
+     → RagMetricsAspect(@Order(3))
+       → 实际方法调用
+如果向量库不可用：CircuitBreakerAspect 在 5 次失败后开路 → 后续请求直返空 List → 聊天不 500
+设计决策：
+- 不使用 resilience4j，自定义轻量 CircuitBreaker，无额外依赖
+- @Recover + CircuitBreaker 双重保障：分别处理"重试耗尽"和"熔断开路"场景
+- 配置统一到 RagProperties 单一入口，内嵌静态类映射到 rag.* 前缀
+- 测试覆盖无数据库/无 API 的方式，仅依赖 Mockito
+验证：mvn -q -DskipTests compile 通过；mvn test -Dtest=RetrievalServiceImplTest,QueryRewriterTest 通过。
