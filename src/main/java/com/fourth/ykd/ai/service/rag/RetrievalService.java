@@ -5,26 +5,25 @@ import org.springframework.ai.document.Document;
 import java.util.List;
 
 /**
- * Service responsible for retrieving knowledge from the vector store.
- * Does NOT decide whether to search — it always attempts retrieval
- * and returns an empty result when nothing matches.
+ * 负责从向量存储中检索知识的服务。
+ * 不决定是否搜索 — 它总是尝试检索，当没有匹配时返回空结果。
  */
 public interface RetrievalService {
 
     /**
-     * Execute a similarity search against the vector store.
+     * 对向量存储执行相似度搜索。
      *
-     * @param question the query string
-     * @return matching documents sorted by similarity descending
+     * @param question 查询字符串
+     * @return 按相似度降序排列的匹配文档
      */
     List<Document> search(String question);
 
     /**
-     * Build a knowledge-context string from retrieved documents.
-     * If no document passes the similarity threshold, returns an empty string.
+     * 从检索到的文档构建知识上下文字符串。
+     * 如果没有文档达到相似度阈值，则返回空字符串。
      *
-     * @param question the query string
-     * @return formatted knowledge prompt fragment, or empty string
+     * @param question 查询字符串
+     * @return 格式化后的知识提示片段，或空字符串
      */
     String getKnowledge(String question);
 }

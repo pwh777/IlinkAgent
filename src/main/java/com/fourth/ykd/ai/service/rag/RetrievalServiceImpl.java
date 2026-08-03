@@ -1,6 +1,6 @@
 package com.fourth.ykd.ai.service.rag;
 
-import com.fourth.ykd.ai.config.CircuitBreaker;
+import com.fourth.ykd.ai.config.ragpro.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -11,22 +11,23 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
+import com.fourth.ykd.ai.service.rag.RagProperties.Retrieval;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Retrieval service implementation using pgvector.
+ * 基于 pgvector 的检索服务实现。
  *
  * <ul>
- *   <li>Configuration comes from {@link RagProperties.Retrieval}</li>
- *   <li>search() is protected by {@code @Retryable} and {@code @CircuitBreaker}</li>
- *   <li>Results are always sorted by similarity descending</li>
- *   <li>getKnowledge() uses a self-proxy call so that retry / circuit-breaker
- *       apply to the internal search invocation</li>
- *   <li>Prompt fragments include metadata source and title (when present)</li>
+ *   <li>配置来自 {@link RagProperties.Retrieval}</li>
+ *   <li>search() 受 {@code @Retryable} 和 {@code @CircuitBreaker} 保护</li>
+ *   <li>结果始终按相似度降序排列</li>
+ *   <li>getKnowledge() 使用自代理调用，以便重试/断路器策略应用于内部搜索调用</li>
+ *   <li>提示片段包含元数据来源和标题（如存在）</li>
  * </ul>
  */
 @Slf4j
@@ -42,30 +43,33 @@ public class RetrievalServiceImpl implements RetrievalService {
         this.ragProperties = ragProperties;
     }
 
-    /** Self-proxy injection — allows {@code getKnowledge()} to benefit from AOP. */
+    /** 自代理注入 — 允许 {@code getKnowledge()} 受益于 AOP。 */
     @Autowired
     @Lazy
     public void setSelf(RetrievalService self) {
         this.self = self;
     }
 
-    // ─── public API ──────────────────────────────────────────
+    // ─── 公共 API ──────────────────────────────────────────
 
     @Override
+    //熔断器
     @CircuitBreaker(name = "rag-search", failureThreshold = 5, openTimeoutMs = 30000)
+    //可重新尝试
     @Retryable(
             retryFor = Exception.class,
             maxAttempts = 3,
             backoff = @Backoff(delay = 1000))
     public List<Document> search(String question) {
-        RagProperties.Retrieval r = ragProperties.getRetrieval();
+        Retrieval r = ragProperties.getRetrieval();
+        //创建搜索请求告诉向量数据库要查询对应的向量
         SearchRequest request = SearchRequest.builder()
                 .query(question)
                 .topK(r.getTopK())
                 .similarityThreshold(r.getSimilarityThreshold())
                 .build();
 
-        List<Document> results = new java.util.ArrayList<>(store.similaritySearch(request));
+        List<Document> results = new ArrayList<>(store.similaritySearch(request));
 
         results.sort(Comparator.comparingDouble(
                 (Document d) -> d.getScore() != null ? d.getScore() : 0.0
@@ -78,9 +82,8 @@ public class RetrievalServiceImpl implements RetrievalService {
     }
 
     /**
-     * {@code @Recover} fallback — invoked when all {@code @Retryable} attempts
-     * are exhausted. Returns an empty list so the chat pipeline does not receive
-     * a 500 error.
+     * {@code @Recover} 降级方法 — 当所有 {@code @Retryable} 尝试都耗尽时调用。
+     * 返回空列表，使聊天管道不会收到 500 错误。
      */
     @Recover
     public List<Document> recoverSearch(Exception e, String question) {
@@ -91,7 +94,7 @@ public class RetrievalServiceImpl implements RetrievalService {
 
     @Override
     public String getKnowledge(String question) {
-        // Use self-proxy so that @Retryable/@CircuitBreaker apply to the call.
+        // 使用自代理，使 @Retryable/@CircuitBreaker 应用于该调用。
         List<Document> docs = self.search(question);
 
         if (docs.isEmpty()) {
@@ -112,7 +115,7 @@ public class RetrievalServiceImpl implements RetrievalService {
                 .collect(Collectors.joining("\n"));
     }
 
-    // ─── private helpers ─────────────────────────────────────
+    // ─── 私有辅助方法 ─────────────────────────────────────
 
     private String formatDocument(Document document) {
         StringBuilder meta = new StringBuilder();

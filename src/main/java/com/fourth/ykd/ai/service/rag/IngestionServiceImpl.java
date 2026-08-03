@@ -20,21 +20,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Ingestion pipeline implementation.
+ * 摄取管道实现。
  *
- * <h3>Flow</h3>
+ * <h3>流程</h3>
  * <ol>
- *   <li>Compute SHA-256 hash of the full document content.</li>
- *   <li>Check dedup table ({@code rag_ingestion_dedup}) by {@code sourceId + hash}.</li>
- *   <li>If duplicate, skip silently.</li>
- *   <li>Otherwise chunk via {@link TokenTextSplitter}, assign per-chunk metadata
- *       ({@code sourceId, title, chunkIndex, totalChunks, ingestedAt}), store in pgvector,
- *       and record the hash.</li>
+ *   <li>计算完整文档内容的 SHA-256 哈希值。</li>
+ *   <li>通过 {@code sourceId + hash} 检查去重表（{@code rag_ingestion_dedup}）。</li>
+ *   <li>如果重复，则静默跳过。</li>
+ *   <li>否则通过 {@link TokenTextSplitter} 分块，分配每块的元数据
+ *       （{@code sourceId, title, chunkIndex, totalChunks, ingestedAt}），
+ *       存储到 pgvector，并记录哈希值。</li>
  * </ol>
  *
- * <h3>Transaction scope</h3>
- * All write methods are bound to {@code ragTransactionManager} so that
- * vector-store writes and dedup-table mutations are atomic.
+ * <h3>事务范围</h3>
+ * 所有写入方法都绑定到 {@code ragTransactionManager}，
+ * 以确保向量存储写入和去重表变更是原子性的。
  */
 @Slf4j
 @Service
@@ -60,14 +60,15 @@ public class IngestionServiceImpl implements IngestionService {
         log.info("[RAG][INGEST] dedup table ready");
     }
 
-    // ─── public API ────────────────────────────────────────────
+    // ─── 公共 API ────────────────────────────────────────────
 
     @Override
     @Transactional(transactionManager = "ragTransactionManager")
     public void ingestDocument(String sourceId, String title, String content,
                                Map<String, Object> metadata) {
+        //计算HASH判断是不是同一份文件
         String contentHash = sha256(content);
-
+        //查表查重内容
         if (isDuplicate(sourceId, contentHash)) {
             log.debug("[RAG][INGEST] duplicate skipped: sourceId={}, hash={}", sourceId, contentHash);
             return;
@@ -76,11 +77,12 @@ public class IngestionServiceImpl implements IngestionService {
         Map<String, Object> baseMeta = new HashMap<>(
                 metadata != null ? metadata : Map.of());
         Document raw = new Document(content, baseMeta);
+        //切块
         List<Document> chunks = splitter.split(List.of(raw));
 
         String ingestedAt = Instant.now().toString();
         int totalChunks = chunks.size();
-
+        //知道知识的来源
         for (int i = 0; i < totalChunks; i++) {
             Document chunk = chunks.get(i);
             chunk.getMetadata().put("sourceId", sourceId);
@@ -89,7 +91,7 @@ public class IngestionServiceImpl implements IngestionService {
             chunk.getMetadata().put("totalChunks", totalChunks);
             chunk.getMetadata().put("ingestedAt", ingestedAt);
         }
-
+        //写入向量库
         store.add(chunks);
 
         ragJdbcTemplate.update(
@@ -104,7 +106,7 @@ public class IngestionServiceImpl implements IngestionService {
     @Override
     @Transactional(transactionManager = "ragTransactionManager")
     public void deleteBySourceId(String sourceId) {
-        // 1. Remove chunks from vector store
+        // 1. 从向量存储中移除块
         List<String> ids = ragJdbcTemplate.queryForList(
                 "SELECT id FROM vector_store WHERE metadata ->> 'sourceId' = ?",
                 String.class, sourceId);
@@ -114,7 +116,7 @@ public class IngestionServiceImpl implements IngestionService {
                     ids.size(), sourceId);
         }
 
-        // 2. Clear dedup record
+        // 2. 清除去重记录
         int deleted = ragJdbcTemplate.update(
                 "DELETE FROM " + TABLE_DEDUP + " WHERE source_id = ?", sourceId);
         log.info("[RAG][INGEST] deleted sourceId={}, dedupRows={}", sourceId, deleted);
@@ -136,7 +138,7 @@ public class IngestionServiceImpl implements IngestionService {
                 Map.of("source", "knowledge"));
     }
 
-    // ─── private helpers ───────────────────────────────────────
+    // ─── 私有辅助方法 ───────────────────────────────────────
 
     private boolean isDuplicate(String sourceId, String contentHash) {
         Integer count = ragJdbcTemplate.queryForObject(
@@ -156,7 +158,7 @@ public class IngestionServiceImpl implements IngestionService {
             }
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
-            // SHA-256 is mandatory in every JVM — should never reach here
+            // SHA-256 在每个 JVM 中都是必需的 — 不应该执行到这里
             throw new RuntimeException("SHA-256 not available", e);
         }
     }

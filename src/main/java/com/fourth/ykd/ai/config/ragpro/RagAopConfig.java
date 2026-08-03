@@ -1,4 +1,4 @@
-package com.fourth.ykd.ai.config;
+package com.fourth.ykd.ai.config.ragpro;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
@@ -22,7 +22,9 @@ import org.springframework.retry.annotation.EnableRetry;
  * </p>
  */
 @Configuration
+//开启AOP代理能够在业务逻辑中插入一些熔断，重试，日志监控，统计耗时之类的公共逻辑
 @EnableAspectJAutoProxy(exposeProxy = true)
+//开启重试机制
 @EnableRetry(order = 2)
 public class RagAopConfig {
 }

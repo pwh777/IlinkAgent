@@ -1,4 +1,4 @@
-package com.fourth.ykd.ai.config;
+package com.fourth.ykd.ai.config.ragpro;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

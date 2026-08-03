@@ -295,10 +295,12 @@ public class ReminderServiceImpl implements ReminderService {
     private void scheduleTask(ReminderTask task) {
         Runnable runnable = () -> executeReminder(task);
         ScheduledFuture<?> future;
+        //周期任务
         if (task.getCronExpression() != null && !task.getCronExpression().isBlank()) {
             future = schedulerTool.scheduleCron(runnable, task.getCronExpression());
             log.info("[REMINDER][SCHEDULED_CRON] id={}, cron={}", task.getId(), task.getCronExpression());
         } else {
+            //定时任务
             Instant triggerTime = Instant.ofEpochMilli(task.getTriggerTimeMs());
             future = schedulerTool.scheduleAt(runnable, triggerTime);
             log.info("[REMINDER][SCHEDULED_AT] id={}, triggerTime={}", task.getId(), triggerTime);

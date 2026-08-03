@@ -8,6 +8,9 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 
+
+//聊天记录持久层
+
 @Repository
 public class SqliteChatMessageRepository {
     private JdbcTemplate jdbcTemplate;

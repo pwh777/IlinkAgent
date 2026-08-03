@@ -1,20 +1,23 @@
 package com.fourth.ykd.ai.service.rag;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Unified RAG configuration properties bound under {@code rag.*}.
+ * 统一的 RAG 配置属性，绑定在 {@code rag.*} 前缀下。
  *
  * <p>
- * Consolidates all previously scattered properties:
+ * 整合了之前分散的所有属性：
  * <ul>
- *   <li>{@code rag.retrieval.*} — top-k / similarity threshold</li>
- *   <li>{@code rag.ingestion.*}  — chunk size / overlap</li>
- *   <li>{@code rag.embedding.*}  — embedding model name</li>
- *   <li>{@code rag.rewrite.*}    — query rewriter model</li>
+ *   <li>{@code rag.retrieval.*} — top-k / 相似度阈值</li>
+ *   <li>{@code rag.ingestion.*}  — 分块大小 / 重叠</li>
+ *   <li>{@code rag.embedding.*}  — 嵌入模型名称</li>
+ *   <li>{@code rag.rewrite.*}    — 查询重写器模型</li>
  * </ul>
  * </p>
  */
+@Getter
 @ConfigurationProperties(prefix = "rag")
 public class RagProperties {
 
@@ -23,44 +26,43 @@ public class RagProperties {
     private final Embedding embedding = new Embedding();
     private final Rewrite rewrite = new Rewrite();
 
-    public Retrieval getRetrieval() { return retrieval; }
-    public Ingestion getIngestion()   { return ingestion; }
-    public Embedding getEmbedding()   { return embedding; }
-    public Rewrite getRewrite()       { return rewrite; }
+    // ─── 嵌套配置组 ──────────────────────────────
 
-    // ─── nested config groups ──────────────────────────────
-
+    //检索配置
+    @Setter
+    @Getter
     public static class Retrieval {
+        //最多返回个数
         private int topK = 3;
+        //相似度阈值（最低）
         private double similarityThreshold = 0.7;
 
-        public int getTopK() { return topK; }
-        public void setTopK(int topK) { this.topK = topK; }
-        public double getSimilarityThreshold() { return similarityThreshold; }
-        public void setSimilarityThreshold(double similarityThreshold) { this.similarityThreshold = similarityThreshold; }
     }
 
+    //文本切割配置
+    @Setter
+    @Getter
     public static class Ingestion {
+        //文本块字数
         private int chunkSize = 800;
+        //防止一句话被切断设置重叠部分
         private int chunkOverlap = 100;
 
-        public int getChunkSize() { return chunkSize; }
-        public void setChunkSize(int chunkSize) { this.chunkSize = chunkSize; }
-        public int getChunkOverlap() { return chunkOverlap; }
-        public void setChunkOverlap(int chunkOverlap) { this.chunkOverlap = chunkOverlap; }
     }
 
+    @Setter
+    @Getter
     public static class Embedding {
+        //文本变成向量的模型
         private String modelName = "text-embedding-v4";
 
-        public String getModelName() { return modelName; }
-        public void setModelName(String modelName) { this.modelName = modelName; }
     }
 
+    @Setter
+    @Getter
     public static class Rewrite {
+        //用于查询改写
         private String model = "deepseek-chat";
 
-        public String getModel() { return model; }
-        public void setModel(String model) { this.model = model; }
     }
 }

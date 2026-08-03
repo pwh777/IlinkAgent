@@ -9,34 +9,32 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Utility that compresses multi-turn conversation into a standalone
- * retrieval query by calling a small, configurable LLM.
+ * 通过调用小型可配置的大语言模型，将多轮对话压缩为独立的检索查询的工具类。
  *
- * <p>Model name is sourced from {@link RagProperties.Rewrite#getModel()}
- * instead of a scattered {@code @Value} annotation.</p>
+ * <p>模型名称从 {@link RagProperties.Rewrite#getModel()} 获取，
+ * 而不是使用分散的 {@code @Value} 注解。</p>
  */
 @Slf4j
 @Component
 public class QueryRewriter {
-
+    //要求模型所干的东西
     private static final String REWRITE_PROMPT_TEMPLATE = """
-            You are a query rewriter for a RAG (Retrieval-Augmented Generation) system.
-            Given a conversation history and the user's latest question, rewrite the user's
-            question into a standalone, self-contained query suitable for document retrieval.
-
-            Rules:
-            - Resolve pronouns (it, they, this, that) to their concrete referents from the history.
-            - Include any important context implied by the conversation but missing from the latest question alone.
-            - Do NOT answer the question.
-            - Output ONLY the rewritten query on a single line.
-
-            Conversation history:
+            你是一个 RAG（检索增强生成）系统的查询重写器。
+            根据对话历史和用户的最新提问，将用户的问题重写为一个适合文档检索的、独立且完整的查询。
+            
+            规则：
+            - 将代词（它 ，她 ，他 , 他们 , 这个, 那个 等）解析为对话历史中的具体指代对象。
+            - 包含对话中隐含但仅凭最新问题无法体现的重要上下文信息。
+            - 不要回答该问题。
+            - 仅输出重写后的查询，且必须为单行。
+            
+            对话历史：
             %s
-
-            User's latest question:
+            
+            用户的最新提问：
             %s
-
-            Rewritten standalone query:
+            
+            重写后的独立查询：
             """;
 
     private final ChatClient chatClient;
@@ -47,13 +45,14 @@ public class QueryRewriter {
         this.rewriteModel = ragProperties.getRewrite().getModel();
     }
 
+
+    //拼接历史
     /**
-     * Rewrite the user's current query into a standalone retrieval query
-     * using the conversation history for context.
+     * 使用对话历史作为上下文，将用户当前的查询重写为独立的检索查询。
      *
-     * @param history      previous messages in the conversation (may be empty)
-     * @param currentQuery the user's latest question
-     * @return a standalone query suitable for vector search
+     * @param history      对话中的历史消息（可为空）
+     * @param currentQuery 用户的最新问题
+     * @return 适用于向量搜索的独立查询
      */
     public String rewrite(List<PersistedChatMessage> history, String currentQuery) {
         if (history == null || history.isEmpty()) {

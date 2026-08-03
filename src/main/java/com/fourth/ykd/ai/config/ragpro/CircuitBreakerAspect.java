@@ -1,4 +1,4 @@
-package com.fourth.ykd.ai.config;
+package com.fourth.ykd.ai.config.ragpro;
 
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 @Order(1)
 public class CircuitBreakerAspect {
-
+    //每个熔断器名称对应一个状态去维护
     private final ConcurrentHashMap<String, CircuitState> circuits = new ConcurrentHashMap<>();
 
     @Around("@annotation(cb)")

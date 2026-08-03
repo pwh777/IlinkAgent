@@ -3,48 +3,44 @@ package com.fourth.ykd.ai.service.rag;
 import java.util.Map;
 
 /**
- * Service responsible for writing / ingesting knowledge
- * documents into the vector store with chunking, deduplication,
- * and transactional guarantees.
+ * 知识文档写入/摄取服务，负责将知识文档分块、去重并以事务方式写入向量存储。
  */
 public interface IngestionService {
 
     /**
-     * Ingest a document: chunk it, write chunks to the vector store,
-     * and record a deduplication entry. Skips write when the same
-     * sourceId + content hash already exists.
+     * 摄取文档：对文档进行分块，将块写入向量存储，并记录去重条目。
+     * 当相同的 sourceId + content hash 已存在时跳过写入。
      *
-     * @param sourceId unique identifier of the source document
-     * @param title    human-readable title
-     * @param content  full text to be chunked and stored
-     * @param metadata additional key-value pairs attached to every chunk
+     * @param sourceId 源文档的唯一标识
+     * @param title    可读的标题
+     * @param content  待分块存储的完整文本
+     * @param metadata 附加到每个块的键值对元数据
      */
+    //把知识放进RAG数据库
     void ingestDocument(String sourceId, String title, String content, Map<String, Object> metadata);
 
     /**
-     * Remove all chunks belonging to the given source from both the
-     * vector store and the deduplication table.
+     * 从向量存储和去重表中移除属于指定源的所有块。
      *
-     * @param sourceId the source to purge
+     * @param sourceId 要清除的源
      */
     void deleteBySourceId(String sourceId);
 
     /**
-     * Atomic update: deletes existing chunks for the sourceId, then
-     * re-ingests with the new content.
+     * 原子更新：先删除指定 sourceId 的现有块，然后用新内容重新摄取。
      *
-     * @param sourceId unique identifier of the source document
-     * @param title    human-readable title
-     * @param content  full text to be chunked and stored
-     * @param metadata additional key-value pairs attached to every chunk
+     * @param sourceId 源文档的唯一标识
+     * @param title    人类可读的标题
+     * @param content  待分块存储的完整文本
+     * @param metadata 附加到每个块的键值对元数据
      */
     void updateDocument(String sourceId, String title, String content, Map<String, Object> metadata);
 
     /**
-     * Convenience method kept for backward compatibility.
-     * Delegates to {@link #ingestDocument} with a fixed sourceId.
+     * 为向后兼容而保留的便捷方法。
+     * 委托给 {@link #ingestDocument}，使用固定的 sourceId。
      *
-     * @param text the raw knowledge text
+     * @param text 原始知识文本
      */
     void addKnowledge(String text);
 }

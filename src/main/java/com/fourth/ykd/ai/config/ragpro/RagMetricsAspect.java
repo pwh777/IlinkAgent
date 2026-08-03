@@ -1,4 +1,4 @@
-package com.fourth.ykd.ai.config;
+package com.fourth.ykd.ai.config.ragpro;
 
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -11,27 +11,32 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Observability aspect for RAG operations.
+ * RagMetricsAspect 就是给RAG加了一套“监控摄像头”，它不改变搜索逻辑，只负责记录每次RAG检索和入库的运行状态，让你知道系统运行得怎么样。
+ * RAG 操作的可观测性切面。
  * <p>
- * Intercepts {@code RetrievalService.search()} and
- * {@code IngestionService.ingestDocument()}, outputting structured JSON
- * log lines with method name, duration, key parameters, result size,
- * and exception type (on failure).
+ *拦截 {@code RetrievalService.search()} 和 {@code IngestionService.ingestDocument()}，
+ * 输出包含方法名、耗时、关键参数、结果数量以及异常类型（若失败）的结构化 JSON 日志行。
  * </p>
  */
+
+//就是一个实现了监控逻辑的监测类
 @Slf4j
 @Aspect
 @Component
 @Order(3)
 public class RagMetricsAspect {
-
+    //around环绕通知通过切点表达式来指定监控方法
     @Around("execution(* com.fourth.ykd.ai.service.rag.RetrievalService.search(..))")
     public Object aroundSearch(ProceedingJoinPoint pjp) throws Throwable {
+        //记录开始时间
         long start = System.currentTimeMillis();
+        //获取用户查询
         String query = pjp.getArgs().length > 0 ? String.valueOf(pjp.getArgs()[0]) : "?";
         try {
+            //然后再放行之前的search用法
             @SuppressWarnings("unchecked")
             List<Document> result = (List<Document>) pjp.proceed();
+            //执行成功计算耗时
             long duration = System.currentTimeMillis() - start;
             log.info(metricJson("search", duration,
                     "query", truncate(query, 200),
@@ -48,6 +53,7 @@ public class RagMetricsAspect {
         }
     }
 
+    //还监控知识入库，逻辑同上
     @Around("execution(* com.fourth.ykd.ai.service.rag.IngestionService.ingestDocument(..))")
     public Object aroundIngestDocument(ProceedingJoinPoint pjp) throws Throwable {
         long start = System.currentTimeMillis();
